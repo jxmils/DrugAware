@@ -47,6 +47,73 @@ def process_medications(med_file):
     
     return med_df
 
+def process_diagnoses(diag_file):
+    """
+    Process the diagnosis data from MIMIC-III DIAGNOSES_ICD.csv file.
+
+    Parameters:
+        diag_file (str): Path to the DIAGNOSES_ICD.csv file.
+
+    Returns:
+        pd.DataFrame: Processed diagnosis DataFrame.
+    """
+    diag_df = pd.read_csv(diag_file, dtype={'ICD9_CODE': 'str'})
+    
+    # Drop unnecessary columns
+    diag_df.drop(columns=['ROW_ID', 'SEQ_NUM'], inplace=True, errors='ignore')
+    
+    # Remove rows with missing ICD9_CODE
+    diag_df.dropna(subset=['ICD9_CODE'], inplace=True)
+    
+    # Remove duplicates and reset index
+    diag_df.drop_duplicates(inplace=True)
+    diag_df.reset_index(drop=True, inplace=True)
+    
+    return diag_df
+
+
+def process_procedures(proc_file):
+    """
+    Process the procedure data from MIMIC-III PROCEDURES_ICD.csv file.
+
+    Parameters:
+        proc_file (str): Path to the PROCEDURES_ICD.csv file.
+
+    Returns:
+        pd.DataFrame: Processed procedure DataFrame.
+    """
+    proc_df = pd.read_csv(proc_file, dtype={'ICD9_CODE': 'str'})
+    
+    # Drop unnecessary columns
+    proc_df.drop(columns=['ROW_ID', 'SEQ_NUM'], inplace=True, errors='ignore')
+    
+    # Remove rows with missing ICD9_CODE
+    proc_df.dropna(subset=['ICD9_CODE'], inplace=True)
+    
+    # Remove duplicates and reset index
+    proc_df.drop_duplicates(inplace=True)
+    proc_df.reset_index(drop=True, inplace=True)
+    
+    return proc_df
+
+
+def select_top_codes(df, code_column, top_n):
+    """
+    Select the top N most common codes in a DataFrame.
+
+    Parameters:
+        df (pd.DataFrame): Input DataFrame.
+        code_column (str): Column containing the codes.
+        top_n (int): Number of top codes to select.
+
+    Returns:
+        pd.DataFrame: Filtered DataFrame with top codes.
+    """
+    top_codes = df[code_column].value_counts().nlargest(top_n).index
+    df = df[df[code_column].isin(top_codes)]
+    df.reset_index(drop=True, inplace=True)
+    return df
+
 def map_ndc_to_atc4(med_df, ndc_rxnorm_file, ndc2atc_file):
     """
     Map NDC codes to ATC Level 4 codes.
@@ -217,3 +284,55 @@ def create_vocabularies(data_df):
         dill.dump(vocabs, f)
 
     return diag_vocab, proc_vocab, med_vocab
+
+
+if __name__ == '__main__':
+    # Configuration
+    med_file = '/Users/jasonmiller/Downloads/Research/src/mimic-iii-clinical-database-1.4/PRESCRIPTIONS.csv'
+    diag_file = '/Users/jasonmiller/Downloads/Research/src/mimic-iii-clinical-database-1.4/DIAGNOSES_ICD.csv'
+    proc_file = '/Users/jasonmiller/Downloads/Research/src/mimic-iii-clinical-database-1.4/PROCEDURES_ICD.csv'
+
+    # NDC to xnorm mapping file
+    ndc_rxnorm_file = './ndc2rxnorm_mapping.txt'
+
+    ndc2atc_file = './ndc2atc_level4.csv'
+
+    # drug（CID） to ATC code mapping
+    cid_atc = './drug-atc.csv'
+
+    # Process Medications
+    med_df = process_medications(med_file)
+    med_df = map_ndc_to_atc4(med_df, ndc_rxnorm_file, ndc2atc_file)
+    med_df = filter_patients_with_multiple_visits(med_df, min_visits=2)
+    med_df = select_top_medications(med_df, top_n=300)
+    print('Completed medication processing.')
+
+    # Process Diagnoses
+    diag_df = process_diagnoses(diag_file)
+    diag_df = select_top_codes(diag_df, code_column='ICD9_CODE', top_n=2000)
+    print('Completed diagnosis processing.')
+
+    # Process Procedures
+    proc_df = process_procedures(proc_file)
+    proc_df = select_top_codes(proc_df, code_column='ICD9_CODE', top_n=1000)
+    print('Completed procedure processing.')
+
+    # Combine Data
+    data_df = combine_data(med_df, diag_df, proc_df)
+    data_df.to_pickle('combined_data.pkl')
+    print('Completed data combining.')
+
+    # Create Vocabularies
+    diag_vocab, proc_vocab, med_vocab = create_vocabularies(data_df)
+    dill.dump(
+        {'diag_vocab': diag_vocab, 'proc_vocab': proc_vocab, 'med_vocab': med_vocab},
+        open('vocabularies.pkl', 'wb')
+    )
+    print('Created vocabularies.')
+
+    # Create Patient Records
+    records = create_patient_records(data_df, diag_vocab, proc_vocab, med_vocab)
+    dill.dump(records, open('patient_records.pkl', 'wb'))
+    print('Created patient records.')
+
+    print('Pipeline execution completed successfully!')
